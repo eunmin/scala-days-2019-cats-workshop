@@ -46,24 +46,24 @@ object BasicProcess extends App {
   /** The finite state machine defines how the state evolves over time. Tweaking
     * the probabilities will arrive at different results. */
   val fsm =
-    Fsm[IO[State],Event]{(state, choice) =>
-        if(choice < 0.5) state.map(_.forward)
-        else if (choice < 0.75) state.map(_.clockwise)
-        else state.map(_.anticlockwise)
+    Fsm[State,Event]{(state, choice) =>
+        if(choice < 0.5) state.forward
+        else if (choice < 0.75) state.clockwise
+        else state.anticlockwise
     }
 
   // impure
   /** Execute one step of the FSM */
-  def step(state: IO[State]): IO[State] = {
+  def step(state: State): IO[State] = {
     val choice = IO(Random.nextDouble())
-    choice.flatMap(a => fsm(state, a))
+    choice.map(a => fsm(state, a))
   }
 
   /** Execute count steps of the FSM */
-  def iterate(count: Int, state: IO[State]): IO[State] = {
-    if(count == 0) state
+  def iterate(count: Int, state: State): IO[State] = {
+    if(count == 0) IO.pure(state)
     else {
-      iterate(count - 1, step(state))
+      step(state).flatMap(s => iterate(count - 1, s))
     }
   }
 
@@ -75,7 +75,7 @@ object BasicProcess extends App {
       0.7 // Somewhat transparent
     ))
 
-  def squiggle(initialState: IO[State]): IO[Image] = for {
+  def squiggle(initialState: State): IO[Image] = for {
     s <- iterate(100, initialState)
     color <- randomColor()
   } yield s.toImage.strokeWidth(3.0).strokeColor(color)
@@ -93,7 +93,7 @@ object BasicProcess extends App {
       val pt = initialPosition()
       val angle = initialDirection(pt)
       val state = State(pt, angle, List.empty)
-      squiggle(IO(state))
+      squiggle(state)
     }.toList.sequence.map(_.allOn)
 
   val frame = Frame.fitToPicture().background(Color.black)
