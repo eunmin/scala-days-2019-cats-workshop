@@ -9,11 +9,12 @@ import doodle.image._
 import doodle.image.syntax._
 import doodle.java2d._
 import doodle.java2d.effect.Frame
-
+import scala.concurrent.ExecutionContext.global
 import scala.util.Random
 
 /** Simple process with no interaction between the elements. */
 object BasicProcess extends App {
+
   /** How much we change the location by when we step forward. */
   val locationDelta = 5.0
   /** How much we change the heading by when we turn. */
@@ -75,26 +76,29 @@ object BasicProcess extends App {
       0.7 // Somewhat transparent
     ))
 
-  def squiggle(initialState: State): IO[Image] = for {
-    s <- iterate(100, initialState)
-    color <- randomColor()
-  } yield s.toImage.strokeWidth(3.0).strokeColor(color)
+  import cats.syntax.parallel._
+  implicit val cs = IO.contextShift(global)
 
-  def initialPosition(): Point = {
-    // Poisson disk sampling might be more attractive
-    Point(Random.nextGaussian() * 150, Random.nextGaussian() * 150)
+  def squiggle(initialState: State): IO[Image] =
+    (iterate(100, initialState), randomColor()).parMapN(_.toImage.strokeWidth(3.0).strokeColor(_))
+
+  def initialPosition(): IO[Point] =
+    (IO(Random.nextGaussian() * 150), IO(Random.nextGaussian() * 150)).parMapN(Point(_, _)) // *
+
+  def initialDirection(position: Point): IO[Angle] =
+    IO((position - Point.zero).angle)
+
+  def squiggles(): IO[Image] = {
+    val makeSquiggle= for {
+      pt <- initialPosition()
+      angle <- initialDirection(pt)
+      result <- squiggle(State(pt, angle, List.empty))
+    } yield result
+
+//    makeSquiggle.replicateA(500).map(_.allOn)
+//    (0 to 500).map { _ => makeSquiggle}.toList.parSequence.map(_.allOn) // *
+    (0 to 500).toList.parTraverse(_ => makeSquiggle).map(_.allOn)
   }
-
-  def initialDirection(position: Point): Angle =
-    (position - Point.zero).angle
-
-  def squiggles(): IO[Image] =
-    (0 to 500).map{_ =>
-      val pt = initialPosition()
-      val angle = initialDirection(pt)
-      val state = State(pt, angle, List.empty)
-      squiggle(state)
-    }.toList.sequence.map(_.allOn)
 
   val frame = Frame.fitToPicture().background(Color.black)
   def go() = squiggles().map{_.draw(frame)}
